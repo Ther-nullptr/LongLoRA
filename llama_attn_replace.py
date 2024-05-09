@@ -18,6 +18,8 @@ from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, repea
 from flash_attn.bert_padding import unpad_input, pad_input
 import math
 
+import torch.nn.functional as F
+
 group_size_ratio = 1/4
 def forward_flashattn(
     self,
@@ -475,3 +477,23 @@ def replace_llama_attn(use_flash_attn=True, use_full=False, inference=False):
             transformers.models.llama.modeling_llama.LlamaAttention.forward = forward_flashattn_full if use_full else forward_flashattn
     else:
         transformers.models.llama.modeling_llama.LlamaAttention.forward = forward_noflashattn
+        
+        
+def replace_mistral_attn(use_flash_attn=True, use_full=False, inference=False):
+    if use_flash_attn:
+        cuda_major, cuda_minor = torch.cuda.get_device_capability()
+        if cuda_major < 8:
+            warnings.warn(
+                "Flash attention is only supported on A100 or H100 GPU during training due to head dim > 64 backward."
+                "ref: https://github.com/HazyResearch/flash-attention/issues/190#issuecomment-1523359593"
+            )
+        if inference:
+            transformers.models.mistral.modeling_mistral.MistralModel._prepare_decoder_attention_mask = _prepare_decoder_attention_mask_inference
+            transformers.models.mistral.modeling_mistral.MistralModel.forward = forward_flashattn_inference
+        else:
+            transformers.models.mistral.modeling_mistral.MistralModel._prepare_decoder_attention_mask = (
+                _prepare_decoder_attention_mask
+            )
+            transformers.models.mistral.modeling_mistral.MistralModel.forward = forward_flashattn_full if use_full else forward_flashattn
+    else:
+        transformers.models.mistral.modeling_mistral.MistralModel.forward = forward_noflashattn

@@ -22,14 +22,14 @@ from typing import Dict, Optional, Sequence
 import torch
 import transformers
 from torch.utils.data import Dataset
-from transformers import Trainer, DataCollatorForLanguageModeling
+from transformers import Trainer, DataCollatorForLanguageModeling, BitsAndBytesConfig
 from llama_attn_replace import replace_llama_attn
 from gptneox_attn_replace import replace_gpt_neox_attn
 from peft import LoraConfig, get_peft_model
 from torch.distributed import barrier
 
-
 from datasets import load_dataset
+from datasets import load_from_disk
 
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
@@ -46,6 +46,7 @@ class ModelArguments:
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
+    data_dir: Optional[str] = field(default="./data")
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
         default=8192 * 4,
@@ -136,6 +137,14 @@ def train():
         config=config,
         cache_dir=training_args.cache_dir,
         torch_dtype=torch.bfloat16,
+        quantization_config=BitsAndBytesConfig(
+            load_in_4bit=True,
+            llm_int8_threshold=6.0,
+            llm_int8_has_fp16_weight=False,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+        ),
     )
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -165,8 +174,9 @@ def train():
     rank = int(os.environ.get('RANK', -1))
     if rank > 0:
         barrier()
-    dataset = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", cache_dir=training_args.cache_dir)
-    dataset = dataset.map(partial(tokenize_fn,tokenizer),batched=True, num_proc=128, remove_columns=["text", "meta"])
+    dataset = load_from_disk(training_args.data_dir)
+    # dataset = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", cache_dir=training_args.cache_dir)
+    # dataset = dataset.map(partial(tokenize_fn, tokenizer), batched=True, batch_size=20, num_proc=64, remove_columns=["text", "meta"])
 
     if rank == 0:
         barrier()

@@ -21,6 +21,7 @@ import random
 import numpy as np
 from tqdm import tqdm
 import transformers
+from transformers import BitsAndBytesConfig
 from peft import PeftModel
 from llama_attn_replace import replace_llama_attn
 
@@ -102,6 +103,11 @@ def evaluate(model, data, batch_size, device, seq_length, sliding_window=256, us
             
             loss_list_val.append(val_loss.item())
             acc_list.append(acc.item())
+            
+            if idx % 50 == 0:
+                val_loss = torch.as_tensor(loss_list_val).mean().item()
+                print(f"Validation loss: {val_loss}")
+                print(f"Validation perplexity: {2.71828 ** val_loss}")
 
     stats['val_acc'] = torch.as_tensor(acc_list).mean().item()
     stats['val_loss'] = torch.as_tensor(loss_list_val).mean().item()
@@ -147,7 +153,7 @@ def main(args):
         args.base_model,
         config=config,
         cache_dir=args.cache_dir,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
         device_map="auto",
     )
     model.resize_token_embeddings(32001)
@@ -162,7 +168,15 @@ def main(args):
             model,
             args.peft_model,
             device_map="auto",
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,
+            quantization_config=BitsAndBytesConfig(
+                load_in_4bit=True,
+                llm_int8_threshold=6.0,
+                llm_int8_has_fp16_weight=False,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            ),
         )
 
     stats = evaluate(model, data, args.batch_size, device, args.seq_len, sliding_window=256)
